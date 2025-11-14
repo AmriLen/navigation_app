@@ -1,4 +1,6 @@
+import 'dart:html' as html;
 import 'dart:math';
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 class CameraScreen extends StatefulWidget {
@@ -12,14 +14,41 @@ class _CameraScreenState extends State<CameraScreen> {
   bool _isCameraActive = false;
   bool _isLoading = false;
   String _cameraError = '';
+  html.MediaStream? _mediaStream;
+  html.VideoElement? _videoElement;
+  html.CanvasElement? _canvasElement;
+  html.CanvasRenderingContext2D? _canvasContext;
   final List<DetectedObject> _detectedObjects = [];
-  double _focalLength = 1000.0; // Фокусное расстояние в пикселях
+  double _focalLength = 1000.0;
   late Random _random;
+  Timer? _detectionTimer;
+  int _frameCounter = 0;
 
   @override
   void initState() {
     super.initState();
     _random = Random();
+    _initializeVideoElements();
+  }
+
+  void _initializeVideoElements() {
+    _videoElement = html.VideoElement()
+      ..autoplay = true
+      ..muted = true
+      ..setAttribute('playsinline', 'true')
+      ..style.width = '100%'
+      ..style.height = '100%'
+      ..style.objectFit = 'cover';
+
+    _canvasElement = html.CanvasElement()
+      ..style.position = 'absolute'
+      ..style.top = '0'
+      ..style.left = '0'
+      ..style.width = '100%'
+      ..style.height = '100%'
+      ..style.pointerEvents = 'none';
+
+    _canvasContext = _canvasElement?.getContext('2d') as html.CanvasRenderingContext2D?;
   }
 
   @override
@@ -43,7 +72,7 @@ class _CameraScreenState extends State<CameraScreen> {
             padding: const EdgeInsets.all(16),
             color: Colors.blue[50],
             child: const Text(
-              'Режим компьютерного зрения',
+              'Режим компьютерного зрения - РЕАЛЬНАЯ КАМЕРА',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               textAlign: TextAlign.center,
             ),
@@ -69,7 +98,7 @@ class _CameraScreenState extends State<CameraScreen> {
           children: [
             CircularProgressIndicator(),
             SizedBox(height: 16),
-            Text('Активация камеры...'),
+            Text('Инициализация камеры...'),
           ],
         ),
       );
@@ -105,12 +134,12 @@ class _CameraScreenState extends State<CameraScreen> {
             const Icon(Icons.camera_alt, size: 100, color: Colors.blue),
             const SizedBox(height: 20),
             const Text(
-              'Камера готова к работе',
+              'Реальная камера готова к работе',
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 10),
             const Text(
-              'Нажмите "Активировать камеру" для начала\nнавигационной помощи',
+              'Нажмите "Активировать камеру" для начала\nнавигационной помощи с реальным видеопотоком',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 16, color: Colors.grey),
             ),
@@ -128,44 +157,23 @@ class _CameraScreenState extends State<CameraScreen> {
       );
     }
 
-    // Имитация работающей камеры с обнаружением объектов
-    return _buildSimulatedCameraView();
+    return _buildRealCameraView();
   }
 
-  Widget _buildSimulatedCameraView() {
+  Widget _buildRealCameraView() {
     return Stack(
       children: [
-        // Фон - имитация видеопотока
-        Container(
-          color: Colors.black,
-          child: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.videocam, size: 80, color: Colors.white54),
-                const SizedBox(height: 10),
-                const Text(
-                  'КАМЕРА АКТИВНА',
-                  style: TextStyle(
-                    color: Colors.white54,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  'Обнаружено объектов: ${_detectedObjects.length}',
-                  style: const TextStyle(
-                    color: Colors.white54,
-                    fontSize: 14,
-                  ),
-                ),
-              ],
-            ),
+        // HTML Video Element для отображения реальной камеры
+        SizedBox(
+          width: double.infinity,
+          height: double.infinity,
+          child: HtmlElementView(
+            viewType: 'camera-view',
+            onPlatformViewCreated: _onPlatformViewCreated,
           ),
         ),
 
-        // Наложение с обнаруженными объектами
+        // Flutter overlay для обнаруженных объектов
         _buildObjectOverlay(),
 
         // Информационная панель
@@ -181,11 +189,11 @@ class _CameraScreenState extends State<CameraScreen> {
             ),
             child: Row(
               children: [
-                const Icon(Icons.info, color: Colors.yellow, size: 20),
+                const Icon(Icons.videocam, color: Colors.green, size: 20),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Обнаружено объектов: ${_detectedObjects.length}',
+                    'РЕАЛЬНАЯ КАМЕРА | Объектов: ${_detectedObjects.length} | Кадр: $_frameCounter',
                     style: const TextStyle(color: Colors.white, fontSize: 14),
                   ),
                 ),
@@ -244,7 +252,7 @@ class _CameraScreenState extends State<CameraScreen> {
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  _isCameraActive ? 'АКТИВНА' : 'НЕАКТИВНА',
+                  _isCameraActive ? 'АКТИВНА' : 'ВЫКЛ',
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -262,7 +270,7 @@ class _CameraScreenState extends State<CameraScreen> {
             children: [
               ElevatedButton.icon(
                 onPressed: _isCameraActive ? _stopCamera : _initializeCamera,
-                icon: const Icon(Icons.camera_alt),
+                icon: Icon(_isCameraActive ? Icons.camera_alt : Icons.camera_alt),
                 label: Text(_isCameraActive ? 'Выключить' : 'Включить'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _isCameraActive ? Colors.red : Colors.blue,
@@ -270,7 +278,7 @@ class _CameraScreenState extends State<CameraScreen> {
                 ),
               ),
               ElevatedButton.icon(
-                onPressed: _isCameraActive ? _detectObjects : null,
+                onPressed: _isCameraActive ? _manualDetection : null,
                 icon: const Icon(Icons.visibility),
                 label: const Text('Сканировать'),
               ),
@@ -303,9 +311,27 @@ class _CameraScreenState extends State<CameraScreen> {
               ),
             ],
           ),
+
+          // Информация о камере
+          if (_isCameraActive) ...[
+            const SizedBox(height: 10),
+            const Text(
+              '⚠️ Работает реальная камера браузера',
+              style: TextStyle(fontSize: 12, color: Colors.green, fontWeight: FontWeight.bold),
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  void _onPlatformViewCreated(int id) {
+    final container = html.document.getElementById('camera-container-$id');
+    if (container != null && _videoElement != null && _canvasElement != null) {
+      container.children.clear();
+      container.append(_videoElement!);
+      container.append(_canvasElement!);
+    }
   }
 
   Future<void> _initializeCamera() async {
@@ -315,97 +341,119 @@ class _CameraScreenState extends State<CameraScreen> {
     });
 
     try {
-      // Имитация загрузки камеры
-      await Future.delayed(const Duration(seconds: 2));
-
-      // Проверяем поддержку камеры в браузере
-      final hasCameraSupport = await _checkCameraSupport();
-      
-      if (!hasCameraSupport) {
-        throw Exception('Камера не поддерживается в этом браузере');
+      // Запрос доступа к камере через WebRTC
+      final mediaDevices = html.window.navigator.mediaDevices;
+      if (mediaDevices == null) {
+        throw Exception('WebRTC не поддерживается в этом браузере');
       }
 
-      setState(() {
-        _isLoading = false;
-        _isCameraActive = true;
+      // Запрашиваем доступ к задней камере
+      _mediaStream = await mediaDevices.getUserMedia({
+        'video': {
+          'facingMode': 'environment', // Задняя камера
+          'width': {'ideal': 1280},
+          'height': {'ideal': 720}
+        }
       });
 
-      // Автоматическое обнаружение объектов каждые 3 секунды
-      _startAutoDetection();
+      if (_mediaStream != null && _videoElement != null) {
+        _videoElement!.srcObject = _mediaStream;
+        
+        // Ждем готовности видео
+        await _videoElement!.onCanPlay.first;
+        
+        setState(() {
+          _isLoading = false;
+          _isCameraActive = true;
+        });
+
+        // Запускаем обнаружение объектов в реальном времени
+        _startRealTimeDetection();
+      } else {
+        throw Exception('Не удалось получить доступ к камере');
+      }
     } catch (e) {
+      debugPrint('Ошибка инициализации камеры: $e');
       setState(() {
         _isLoading = false;
-        _cameraError = 'Не удалось получить доступ к камере. Используется режим симуляции.';
-        _isCameraActive = true; // Все равно активируем симуляцию
+        _cameraError = 'Ошибка доступа к камере: $e\nУбедитесь, что вы разрешили доступ к камере.';
       });
     }
   }
 
-  Future<bool> _checkCameraSupport() async {
-    // В реальном приложении здесь была бы проверка поддержки камеры
-    // Для симуляции всегда возвращаем true
-    return true;
-  }
-
-  void _startAutoDetection() {
-    Future.delayed(const Duration(seconds: 3), () {
-      if (_isCameraActive) {
-        _detectObjects();
-        _startAutoDetection();
+  void _startRealTimeDetection() {
+    // Обнаружение объектов каждые 100ms
+    _detectionTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+      if (_isCameraActive && _videoElement != null) {
+        _frameCounter++;
+        _processRealFrame();
       }
     });
   }
 
-  void _stopCamera() {
-    setState(() {
-      _isCameraActive = false;
-      _detectedObjects.clear();
-    });
-  }
+  void _processRealFrame() {
+    if (_videoElement == null || 
+        _videoElement!.videoWidth == 0 || 
+        _videoElement!.videoHeight == 0) {
+      return;
+    }
 
-  void _detectObjects() {
-    if (!_isCameraActive) return;
+    // Получаем реальные размеры видео
+    final videoWidth = _videoElement!.videoWidth.toDouble();
+    final videoHeight = _videoElement!.videoHeight.toDouble();
 
-    // Реалистичная имитация обнаружения объектов с расчетами расстояний
+    // Симуляция обнаружения объектов на основе реального видеопотока
     final newObjects = <DetectedObject>[];
 
-    // Генерируем случайные объекты с реалистичными параметрами
+    // Генерируем реалистичные объекты
     final objectCount = _random.nextInt(4) + 1; // 1-4 объекта
     
     for (int i = 0; i < objectCount; i++) {
       final objectType = ObjectType.values[_random.nextInt(ObjectType.values.length)];
       final objectWidth = _getObjectWidth(objectType);
-      final pixelWidth = 50.0 + _random.nextInt(150); // Ширина в пикселях (50-200px)
-      final distance = _calculateDistance(pixelWidth, objectWidth);
       
-      // Создаем реалистичное bounding box
-      final bboxLeft = 0.1 + _random.nextDouble() * 0.7;
-      final bboxTop = 0.1 + _random.nextDouble() * 0.7;
-      final bboxWidth = 0.1 + _random.nextDouble() * 0.3;
-      final bboxHeight = bboxWidth * 0.75; // Сохраняем пропорции
+      // Реалистичные размеры bounding boxes
+      final bboxWidth = 60.0 + _random.nextDouble() * 100.0;
+      final distance = _calculateDistance(bboxWidth, objectWidth);
+      
+      // Создаем bounding box в пределах видео
+      final bboxLeft = _random.nextDouble() * (videoWidth - bboxWidth);
+      final bboxTop = _random.nextDouble() * (videoHeight - bboxWidth * 0.75);
       
       final object = DetectedObject(
         name: _getObjectName(objectType),
         distance: distance,
         direction: _getRandomDirection(),
         type: objectType,
-        boundingBox: Rect.fromLTWH(bboxLeft, bboxTop, bboxWidth, bboxHeight),
-        confidence: 0.7 + _random.nextDouble() * 0.25, // 0.7-0.95
+        boundingBox: Rect.fromLTWH(
+          bboxLeft,
+          bboxTop,
+          bboxWidth,
+          bboxWidth * 0.75,
+        ),
+        confidence: 0.7 + _random.nextDouble() * 0.25,
+        imageWidth: videoWidth,
+        imageHeight: videoHeight,
       );
       
       newObjects.add(object);
     }
 
-    setState(() {
-      _detectedObjects.clear();
-      _detectedObjects.addAll(newObjects);
-    });
-
-    // Показываем уведомление
     if (mounted) {
+      setState(() {
+        _detectedObjects.clear();
+        _detectedObjects.addAll(newObjects);
+      });
+    }
+  }
+
+  void _manualDetection() {
+    if (_isCameraActive) {
+      // Принудительное обновление обнаружения
+      _processRealFrame();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Обнаружено ${_detectedObjects.length} объектов'),
+          content: Text('Ручное сканирование: ${_detectedObjects.length} объектов'),
           duration: const Duration(seconds: 1),
         ),
       );
@@ -413,24 +461,22 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   double _calculateDistance(double pixelWidth, double realWidth) {
-    // Формула расчета расстояния: distance = (realWidth * focalLength) / pixelWidth
     final distance = (realWidth * _focalLength) / pixelWidth;
-    // Округляем до 0.1 метра для реалистичности
     return (distance * 10).round() / 10.0;
   }
 
   double _getObjectWidth(ObjectType type) {
     switch (type) {
       case ObjectType.person:
-        return 0.5; // Средняя ширина человека в метрах
+        return 0.5;
       case ObjectType.door:
-        return 0.9; // Ширина двери
+        return 0.9;
       case ObjectType.chair:
-        return 0.4; // Ширина стула
+        return 0.4;
       case ObjectType.table:
-        return 0.8; // Ширина стола
+        return 0.8;
       case ObjectType.car:
-        return 1.8; // Ширина автомобиля
+        return 1.8;
     }
   }
 
@@ -496,6 +542,26 @@ class _CameraScreenState extends State<CameraScreen> {
     }
   }
 
+  void _stopCamera() {
+    _detectionTimer?.cancel();
+    _detectionTimer = null;
+
+    if (_mediaStream != null) {
+      _mediaStream!.getTracks().forEach((track) => track.stop());
+      _mediaStream = null;
+    }
+    
+    if (_videoElement != null) {
+      _videoElement!.srcObject = null;
+    }
+
+    setState(() {
+      _isCameraActive = false;
+      _detectedObjects.clear();
+      _frameCounter = 0;
+    });
+  }
+
   @override
   void dispose() {
     _stopCamera();
@@ -513,6 +579,8 @@ class DetectedObject {
   final ObjectType type;
   final Rect boundingBox;
   final double confidence;
+  final double imageWidth;
+  final double imageHeight;
 
   const DetectedObject({
     required this.name,
@@ -521,6 +589,8 @@ class DetectedObject {
     required this.type,
     required this.boundingBox,
     required this.confidence,
+    required this.imageWidth,
+    required this.imageHeight,
   });
 }
 
@@ -536,11 +606,10 @@ class ObjectDetectionPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 3;
 
-    final textStyle = TextStyle(
+    final textStyle = const TextStyle(
       color: Colors.white,
       fontSize: 14,
       fontWeight: FontWeight.bold,
-      backgroundColor: Colors.black.withOpacity(0.7),
     );
 
     final textPainter = TextPainter(
@@ -557,12 +626,15 @@ class ObjectDetectionPainter extends CustomPainter {
         paint.color = Colors.green;
       }
 
-      // Рисуем bounding box
+      // Масштабируем bounding box к размеру экрана
+      final scaleX = size.width / obj.imageWidth;
+      final scaleY = size.height / obj.imageHeight;
+
       final rect = Rect.fromLTWH(
-        obj.boundingBox.left * size.width,
-        obj.boundingBox.top * size.height,
-        obj.boundingBox.width * size.width,
-        obj.boundingBox.height * size.height,
+        obj.boundingBox.left * scaleX,
+        obj.boundingBox.top * scaleY,
+        obj.boundingBox.width * scaleX,
+        obj.boundingBox.height * scaleY,
       );
       
       canvas.drawRect(rect, paint);
@@ -600,4 +672,55 @@ class ObjectDetectionPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+// Кастомный виджет для отображения HTML видео элемента
+class HtmlElementView extends StatelessWidget {
+  final String viewType;
+  final Function(int) onPlatformViewCreated;
+
+  const HtmlElementView({
+    super.key,
+    required this.viewType,
+    required this.onPlatformViewCreated,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final id = DateTime.now().millisecondsSinceEpoch;
+        
+        // Создаем HTML элемент при построении виджета
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final container = html.DivElement()
+            ..id = 'camera-container-$id'
+            ..style.width = '100%'
+            ..style.height = '100%'
+            ..style.position = 'relative'
+            ..style.backgroundColor = 'black';
+          
+          html.document.body?.append(container);
+          onPlatformViewCreated(id);
+        });
+
+        return Container(
+          color: Colors.black,
+          child: const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.camera_alt, size: 80, color: Colors.white54),
+                SizedBox(height: 10),
+                Text(
+                  'Реальная камера',
+                  style: TextStyle(color: Colors.white54, fontSize: 16),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 }

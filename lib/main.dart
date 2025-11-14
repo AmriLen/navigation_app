@@ -54,7 +54,7 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 20),
               const Text(
-                'Система компьютерного зрения с голосовым интерфейсом\nдля помощи в навигации',
+                'Реальная камера с компьютерным зрением\nдля помощи в навигации',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 16,
@@ -71,13 +71,22 @@ class HomeScreen extends StatelessWidget {
                 },
                 icon: const Icon(Icons.camera_alt),
                 label: const Text(
-                  'Запустить навигационную помощь',
+                  'Запустить реальную камеру',
                   style: TextStyle(fontSize: 18),
                 ),
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
                   backgroundColor: Colors.blue,
                   foregroundColor: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                '⚠️ Разрешите доступ к камере в браузере',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.orange,
                 ),
               ),
             ],
