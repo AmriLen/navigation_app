@@ -1,16 +1,16 @@
-# navigation_app
+# Навигационный помощник для слабовидящих
 
-A new Flutter project.
+Проект выполнен в рамках хакатона ***кибер102.рф***
 
-## Getting Started
+## Цель проекта
 
-This project is a starting point for a Flutter application.
+Разработка мобильного приложения или WEB-приложения, использующего ИИ для обнаружения объектов и помощи в навигации слабовидящим и слепым людям.
 
-A few resources to get you started if this is your first Flutter project:
+## Команда
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+ANONYMOUS
+- Егор Насыров
+- Гюльзана Газизова
+- Иван Думчев
+- Амир Айчуваков
+- Ксения Яковлева
