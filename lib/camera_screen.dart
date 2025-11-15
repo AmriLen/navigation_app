@@ -1,3 +1,4 @@
+// camera_screen.dart с YOLO
 import 'dart:io';
 import 'dart:math';
 import 'dart:async';
@@ -29,6 +30,12 @@ class _CameraScreenState extends State<CameraScreen> {
   Interpreter? _interpreter;
   bool _isProcessing = false;
   
+  // YOLO настройки
+  static const String _modelPath = 'assets/yolov5s.tflite'; // или yolov4, yolov8
+  static const double _confidenceThreshold = 0.5;
+  static const double _nmsThreshold = 0.4;
+  static const int _inputSize = 416; // YOLO стандартный размер
+  
   // Добавляем переменные для озвучивания
   FlutterTts? _flutterTts;
   bool _isVoiceEnabled = true;
@@ -36,11 +43,28 @@ class _CameraScreenState extends State<CameraScreen> {
   Set<String> _announcedObjects = {};
   DateTime _lastVoiceTime = DateTime.now();
 
-  // Настройки модели
-  static const String _modelPath = 'assets/ssd_mobilenet.tflite';
-  static const double _confidenceThreshold = 0.6; // Понижаем порог для лучшего обнаружения
-  
-  // Полный словарь меток на русском языке
+  // Словарь меток COCO для YOLO (80 классов)
+  static const Map<int, String> _cocoLabels = {
+    0: 'person', 1: 'bicycle', 2: 'car', 3: 'motorcycle', 4: 'airplane',
+    5: 'bus', 6: 'train', 7: 'truck', 8: 'boat', 9: 'traffic light',
+    10: 'fire hydrant', 11: 'stop sign', 12: 'parking meter', 13: 'bench',
+    14: 'bird', 15: 'cat', 16: 'dog', 17: 'horse', 18: 'sheep', 19: 'cow',
+    20: 'elephant', 21: 'bear', 22: 'zebra', 23: 'giraffe', 24: 'backpack',
+    25: 'umbrella', 26: 'handbag', 27: 'tie', 28: 'suitcase', 29: 'frisbee',
+    30: 'skis', 31: 'snowboard', 32: 'sports ball', 33: 'kite', 34: 'baseball bat',
+    35: 'baseball glove', 36: 'skateboard', 37: 'surfboard', 38: 'tennis racket',
+    39: 'bottle', 40: 'wine glass', 41: 'cup', 42: 'fork', 43: 'knife',
+    44: 'spoon', 45: 'bowl', 46: 'banana', 47: 'apple', 48: 'sandwich',
+    49: 'orange', 50: 'broccoli', 51: 'carrot', 52: 'hot dog', 53: 'pizza',
+    54: 'donut', 55: 'cake', 56: 'chair', 57: 'couch', 58: 'potted plant',
+    59: 'bed', 60: 'dining table', 61: 'toilet', 62: 'tv', 63: 'laptop',
+    64: 'mouse', 65: 'remote', 66: 'keyboard', 67: 'cell phone', 68: 'microwave',
+    69: 'oven', 70: 'toaster', 71: 'sink', 72: 'refrigerator', 73: 'book',
+    74: 'clock', 75: 'vase', 76: 'scissors', 77: 'teddy bear', 78: 'hair drier',
+    79: 'toothbrush'
+  };
+
+  // Русские названия
   static const Map<String, String> _russianLabels = {
     'person': 'Человек',
     'bicycle': 'Велосипед',
@@ -124,7 +148,7 @@ class _CameraScreenState extends State<CameraScreen> {
     'toothbrush': 'Зубная щетка',
   };
 
-  // Приоритетные объекты для навигации (более важные объекты)
+  // Приоритетные объекты для навигации
   static const List<String> _priorityObjects = [
     'person', 'car', 'truck', 'bus', 'motorcycle', 'bicycle',
     'chair', 'table', 'door', 'stairs', 'wall'
@@ -147,7 +171,6 @@ class _CameraScreenState extends State<CameraScreen> {
       await _flutterTts?.setVolume(1.0);
       await _flutterTts?.setPitch(1.0);
       
-      // Добавляем обработчики событий TTS для отладки
       _flutterTts?.setStartHandler(() {
         debugPrint("TTS started");
       });
@@ -164,190 +187,14 @@ class _CameraScreenState extends State<CameraScreen> {
       debugPrint('Ошибка инициализации TTS: $e');
     }
     
-    _voiceTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    _voiceTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
       if (_isVoiceEnabled && _detectedObjects.isNotEmpty && mounted) {
         _announceObjects();
       }
     });
   }
 
-  // Улучшаем логику озвучивания
-  Future<void> _announceObjects() async {
-    if (!_isVoiceEnabled || _flutterTts == null || !mounted) return;
-    
-    final now = DateTime.now();
-    // Увеличиваем интервал между озвучиваниями
-    if (now.difference(_lastVoiceTime).inSeconds < 1) return;
-    
-    try {
-      // Фильтруем объекты для озвучивания
-      final objectsToAnnounce = _detectedObjects
-          .where((obj) => obj.distance < 8.0)
-          .where((obj) => _isPriorityObject(obj.name))
-          .where((obj) => !_announcedObjects.contains(_getObjectKey(obj)))
-          .where((obj) => obj.confidence > 0.6) // Повышаем порог уверенности
-          .toList();
-      
-      if (objectsToAnnounce.isNotEmpty) {
-        // Сортируем по приоритету и расстоянию
-        objectsToAnnounce.sort((a, b) {
-          final priorityA = _getObjectPriority(a.name);
-          final priorityB = _getObjectPriority(b.name);
-          if (priorityA != priorityB) {
-            return priorityB.compareTo(priorityA);
-          }
-          return a.distance.compareTo(b.distance);
-        });
-        
-        final nearestObject = objectsToAnnounce.first;
-        
-        // Проверяем, достаточно ли объект значим для озвучивания
-        if (_shouldAnnounceObject(nearestObject)) {
-          final announcement = _generateAnnouncement(nearestObject);
-          
-          debugPrint('Озвучивание: $announcement');
-          
-          await _flutterTts!.speak(announcement);
-          _announcedObjects.add(_getObjectKey(nearestObject));
-          _lastVoiceTime = DateTime.now();
-          
-          // Ограничиваем размер множества озвученных объектов
-          if (_announcedObjects.length > 20) {
-            final temp = _announcedObjects.toList().sublist(10);
-            _announcedObjects.clear();
-            _announcedObjects.addAll(temp);
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint('Ошибка озвучивания: $e');
-    }
-  }
-
-  // Проверяем, стоит ли озвучивать объект
-  bool _shouldAnnounceObject(DetectedObject obj) {
-    // Озвучиваем только если объект достаточно уверенно распознан
-    if (obj.confidence < 0.6) return false;
-    
-    // Озвучиваем близкие объекты чаще
-    if (obj.distance < 3.0) return true;
-    
-    // Для далеких объектов озвучиваем только приоритетные
-    if (obj.distance >= 3.0) {
-      return _getObjectPriority(obj.name) >= 70;
-    }
-    
-    return true;
-  }
-
-  // Улучшаем генерацию объявления
-  String _generateAnnouncement(DetectedObject obj) {
-    String distanceText;
-    
-    if (obj.distance < 1.5) {
-      distanceText = 'очень близко';
-    } else if (obj.distance < 3.0) {
-      distanceText = 'близко';
-    } else if (obj.distance < 6.0) {
-      distanceText = 'впереди';
-    } else {
-      distanceText = 'далеко';
-    }
-    
-    // Для особо близких объектов добавляем предупреждение
-    if (obj.distance < 2.0) {
-      return 'Внимание! ${obj.name} $distanceText ${obj.direction}';
-    }
-    
-    // Упрощаем фразу для лучшего восприятия
-    return '${obj.name} $distanceText';
-  }
-
-  // Добавляем метод для принудительного озвучивания
-  // void _announceCurrentObjects() {
-  //   if (!_isVoiceEnabled) return;
-    
-  //   _announcedObjects.clear(); // Сбрасываем историю
-  //   _announceObjects(); // Запускаем озвучивание
-    
-  //   ScaffoldMessenger.of(context).showSnackBar(
-  //     const SnackBar(
-  //       content: Text('Озвучивание текущих объектов'),
-  //       duration: Duration(seconds: 1),
-  //     ),
-  //   );
-  // }
-
-  // Проверяем, является ли объект приоритетным для навигации
-  bool _isPriorityObject(String objectName) {
-    final englishName = _russianLabels.entries
-        .firstWhere((entry) => entry.value == objectName, orElse: () => MapEntry('', ''))
-        .key;
-    return _priorityObjects.contains(englishName) || objectName.contains('человек') || objectName.contains('авто');
-  }
-
-  // Получаем приоритет объекта (чем выше число, тем выше приоритет)
-  int _getObjectPriority(String objectName) {
-    final englishName = _russianLabels.entries
-        .firstWhere((entry) => entry.value == objectName, orElse: () => MapEntry('', ''))
-        .key;
-    
-    if (englishName == 'person') return 100;
-    if (['car', 'truck', 'bus', 'motorcycle'].contains(englishName)) return 90;
-    if (['chair', 'table', 'door'].contains(englishName)) return 80;
-    if (['stairs', 'wall'].contains(englishName)) return 70;
-    return 50;
-  }
-
-  // String _generateAnnouncement(DetectedObject obj) {
-  //   String distanceText;
-    
-  //   if (obj.distance < 1.0) {
-  //     distanceText = 'очень близко';
-  //   } else if (obj.distance < 3.0) {
-  //     distanceText = 'близко';
-  //   } else if (obj.distance < 6.0) {
-  //     distanceText = 'впереди';
-  //   } else {
-  //     distanceText = 'далеко';
-  //   }
-    
-  //   // Для особо близких объектов добавляем предупреждение
-  //   if (obj.distance < 2.0) {
-  //     return 'Внимание! ${obj.name} $distanceText ${obj.direction}';
-  //   }
-    
-  //   return '${obj.name} $distanceText ${obj.direction}';
-  // }
-
-  String _getObjectKey(DetectedObject obj) {
-    return '${obj.name}_${obj.direction}_${(obj.distance ~/ 0.5)}';
-  }
-
-  void _toggleVoice() {
-    setState(() {
-      _isVoiceEnabled = !_isVoiceEnabled;
-    });
-    
-    if (_isVoiceEnabled) {
-      _announcedObjects.clear();
-    } else {
-      _flutterTts?.stop();
-    }
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(_isVoiceEnabled ? 
-          'Озвучивание включено' : 'Озвучивание выключено'),
-        duration: const Duration(seconds: 1),
-      ),
-    );
-  }
-
-  Future<void> _initializeApp() async {
-    await _loadModel();
-    await _initializeCamera();
-  }
+  // 🔄 ОСНОВНЫЕ ИЗМЕНЕНИЯ ДЛЯ YOLO НАЧИНАЮТСЯ ЗДЕСЬ
 
   Future<void> _loadModel() async {
     try {
@@ -362,10 +209,11 @@ class _CameraScreenState extends State<CameraScreen> {
         options: options,
       );
 
+      // Получаем информацию о входных/выходных тензорах
       var inputTensors = _interpreter!.getInputTensors();
       var outputTensors = _interpreter!.getOutputTensors();
       
-      debugPrint('Модель загружена успешно');
+      debugPrint('YOLO модель загружена успешно');
       debugPrint('Входные тензоры: $inputTensors');
       debugPrint('Выходные тензоры: $outputTensors');
 
@@ -375,270 +223,159 @@ class _CameraScreenState extends State<CameraScreen> {
       });
       
     } catch (e) {
-      debugPrint('Ошибка загрузки модели: $e');
+      debugPrint('Ошибка загрузки YOLO модели: $e');
       setState(() {
-        _cameraError = 'Ошибка загрузки ИИ-модели: ${e.toString()}\nУбедитесь, что файл $_modelPath существует в папке assets';
+        _cameraError = 'Ошибка загрузки YOLO модели: ${e.toString()}\nУбедитесь, что файл $_modelPath существует в папке assets';
         _isLoading = false;
       });
     }
   }
 
-  Future<void> _initializeCamera() async {
-    setState(() {
-      _isLoading = true;
-      _cameraError = '';
-    });
-
+  // 🎯 ПРЕДОБРАБОТКА ДЛЯ YOLO
+// Измените сигнатуру метода если нужно возвращать Float32List
+List<Uint8List> _preprocessImageForYOLO(img.Image image) {
+  // Ресайз до размера YOLO
+  final resizedImage = img.copyResize(image, width: _inputSize, height: _inputSize);
+  
+  // Создаем байтовый буфер для RGB данных
+  final inputBytes = Uint8List(_inputSize * _inputSize * 3);
+  int index = 0;
+  
+  for (int y = 0; y < _inputSize; y++) {
+    for (int x = 0; x < _inputSize; x++) {
+      // Получаем цвет пикселя и преобразуем в RGB компоненты
+      final color = resizedImage.getPixel(x, y);
+      
+      // Используем методы для получения RGB компонентов
+      final r = img.getRed(color);
+      final g = img.getGreen(color);
+      final b = img.getBlue(color);
+      
+      inputBytes[index++] = r;
+      inputBytes[index++] = g;
+      inputBytes[index++] = b;
+    }
+  }
+  
+  return [inputBytes];
+}
+  // 🎯 ЗАПУСК YOLO INFERENCE
+  Future<List<List<dynamic>>> _runYOLOInference(List<Uint8List> input) async {
     try {
-      _cameras = await availableCameras();
-      if (_cameras == null || _cameras!.isEmpty) {
-        throw Exception('Камеры не найдены');
+      // Для YOLO обычно один выходной тензор [1, N, 85]
+      // где 85 = [x, y, w, h, confidence, class_probabilities...]
+      final outputTensors = _interpreter!.getOutputTensors();
+      final outputs = <List<dynamic>>[];
+      
+      for (var tensor in outputTensors) {
+        final shape = tensor.shape;
+        final size = shape.reduce((a, b) => a * b);
+        outputs.add(List.filled(size, 0.0).reshape(shape));
       }
-
-      final CameraDescription camera = _cameras!.firstWhere(
-        (camera) => camera.lensDirection == CameraLensDirection.back,
-        orElse: () => _cameras!.first,
-      );
-
-      _controller = CameraController(
-        camera,
-        ResolutionPreset.high, // Используем medium для лучшей производительности
-        enableAudio: false,
-      );
-
-      await _controller!.initialize();
-
-      setState(() {
-        _isLoading = false;
-        _isCameraActive = true;
-      });
-
-      _startRealTimeDetection();
-
+      
+      final outputMap = <int, Object>{};
+      for (int i = 0; i < outputs.length; i++) {
+        outputMap[i] = outputs[i];
+      }
+      
+      _interpreter!.runForMultipleInputs(input, outputMap);
+      
+      return outputs;
     } catch (e) {
-      debugPrint('Ошибка инициализации камеры: $e');
-      setState(() {
-        _isLoading = false;
-        _cameraError = 'Ошибка доступа к камере: ${e.toString()}\nУбедитесь, что вы разрешили доступ к камере.';
-      });
+      debugPrint('Ошибка YOLO inference: $e');
+      rethrow;
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Навигационный помощник - Камера'),
-        backgroundColor: Colors.blue,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            _stopCamera();
-            Navigator.pop(context);
-          },
-        ),
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: _buildCameraArea(),
-          ),
-          _buildControlPanel(),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCameraArea() {
-    if (_isLoading) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('Инициализация камеры и ИИ-модели...'),
-          ],
-        ),
-      );
-    }
-
-    if (_cameraError.isNotEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.error, size: 64, color: Colors.red),
-            const SizedBox(height: 16),
-            Text(
-              _cameraError,
-              style: const TextStyle(fontSize: 16, color: Colors.red),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _initializeApp,
-              child: const Text('Попробовать снова'),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (!_isCameraActive || _controller == null || !_controller!.value.isInitialized) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.camera_alt, size: 100, color: Colors.blue),
-            const SizedBox(height: 20),
-            Text(
-              _isModelLoaded ? 'ИИ-модель загружена' : 'Загрузка ИИ-модели...',
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            const Text(
-              'Нажмите "Активировать камеру" для начала\nнавигационной помощи с реальным ИИ-анализом',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16, color: Colors.grey),
-            ),
-            const SizedBox(height: 30),
-            ElevatedButton.icon(
-              onPressed: _initializeCamera,
-              icon: const Icon(Icons.camera_alt),
-              label: const Text('Активировать камеру'),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return _buildRealCameraView();
-  }
-
-  Widget _buildRealCameraView() {
-    return Stack(
-      children: [
-        CameraPreview(_controller!),
-        _buildObjectOverlay(),
-        Positioned(
-          top: 20,
-          left: 20,
-          right: 20,
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.black54,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.videocam, color: Colors.red, size: 20),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'LIVE | Объектов: ${_detectedObjects.length} | Кадр: $_frameCounter | ИИ: ${_isModelLoaded ? "АКТИВЕН" : "ОФФЛАЙН"} | Голос: ${_isVoiceEnabled ? "ВКЛ" : "ВЫКЛ"}',
-                    style: const TextStyle(color: Colors.white, fontSize: 14),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildObjectOverlay() {
-    return IgnorePointer(
-      child: CustomPaint(
-        painter: ObjectDetectionPainter(_detectedObjects),
-        size: Size.infinite,
-      ),
-    );
-  }
-
-  Widget _buildControlPanel() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      color: Colors.grey[100],
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Статус:',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              Row(
-                children: [
-                  _buildStatusChip('КАМЕРА', _isCameraActive ? Colors.green : Colors.orange),
-                  const SizedBox(width: 5),
-                  _buildStatusChip('ИИ', _isModelLoaded ? Colors.green : Colors.red),
-                  const SizedBox(width: 5),
-                  _buildStatusChip('ГОЛОС', _isVoiceEnabled ? Colors.green : Colors.grey),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 20),
-
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              IconButton(
-                onPressed: _toggleVoice,
-                icon: Icon(_isVoiceEnabled ? Icons.volume_up : Icons.volume_off),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _isVoiceEnabled ? Colors.blue : Colors.grey,
-                ),
-              ),
-              IconButton(
-                onPressed: _isCameraActive ? _manualDetection : null,
-                icon: const Icon(Icons.visibility),
-              ),
-              IconButton(
-                onPressed: _isCameraActive ? _checkDangers : null,
-                icon: const Icon(Icons.warning),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatusChip(String text, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        text,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.bold,
-          fontSize: 10,
-        ),
-      ),
-    );
-  }
-
-  void _startRealTimeDetection() {
-    _detectionTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
-      if (_isCameraActive && !_isProcessing) {
-        _frameCounter++;
-        _processRealFrame();
+  // 🎯 ОБРАБОТКА ВЫХОДА YOLO
+  List<DetectedObject> _processYOLOOutput(List<List<dynamic>> output, int imageWidth, int imageHeight) {
+    final objects = <DetectedObject>[];
+    
+    try {
+      // YOLO выход обычно в формате [1, N, 85]
+      final predictions = output[0][0];
+      
+      for (int i = 0; i < predictions.length; i++) {
+        try {
+          final prediction = predictions[i];
+          
+          // Извлекаем уверенность
+          final confidence = prediction[4].toDouble();
+          
+          if (confidence > _confidenceThreshold) {
+            // Находим класс с максимальной вероятностью
+            double maxClassScore = 0;
+            int classId = 0;
+            
+            for (int j = 5; j < prediction.length; j++) {
+              final score = prediction[j].toDouble();
+              if (score > maxClassScore) {
+                maxClassScore = score;
+                classId = j - 5;
+              }
+            }
+            
+            final finalScore = confidence * maxClassScore;
+            
+            if (finalScore > _confidenceThreshold) {
+              final englishLabel = _cocoLabels[classId] ?? 'Unknown';
+              final russianLabel = _russianLabels[englishLabel] ?? englishLabel;
+              
+              if (russianLabel != 'Unknown') {
+                // Извлекаем bounding box (YOLO формат: center_x, center_y, width, height)
+                final x = prediction[0].toDouble();
+                final y = prediction[1].toDouble();
+                final w = prediction[2].toDouble();
+                final h = prediction[3].toDouble();
+                
+                // Конвертируем в координаты углов
+                final left = (x - w / 2) * imageWidth;
+                final top = (y - h / 2) * imageHeight;
+                final right = (x + w / 2) * imageWidth;
+                final bottom = (y + h / 2) * imageHeight;
+                
+                final width = right - left;
+                final height = bottom - top;
+                
+                // Фильтруем слишком маленькие объекты
+                if (width > 20 && height > 20 && width < imageWidth * 0.8 && height < imageHeight * 0.8) {
+                  final objectType = _getObjectType(englishLabel);
+                  final distance = _estimateDistance(objectType, width);
+                  final direction = _estimateDirection(left, right, imageWidth);
+                  
+                  objects.add(DetectedObject(
+                    name: russianLabel,
+                    distance: distance,
+                    direction: direction,
+                    type: objectType,
+                    boundingBox: Rect.fromLTRB(
+                      left.clamp(0, imageWidth.toDouble()),
+                      top.clamp(0, imageHeight.toDouble()),
+                      right.clamp(0, imageWidth.toDouble()),
+                      bottom.clamp(0, imageHeight.toDouble()),
+                    ),
+                    confidence: finalScore,
+                    imageWidth: imageWidth.toDouble(),
+                    imageHeight: imageHeight.toDouble(),
+                  ));
+                  
+                  debugPrint('YOLO обнаружен: $russianLabel (${finalScore.toStringAsFixed(2)})');
+                }
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('Ошибка обработки предсказания $i: $e');
+        }
       }
-    });
+    } catch (e) {
+      debugPrint('Ошибка обработки вывода YOLO: $e');
+    }
+    
+    return _applyNMS(objects, _nmsThreshold);
   }
 
+  // 🔄 ОБНОВЛЕННЫЙ МЕТОД ОБРАБОТКИ КАДРА
   Future<void> _processRealFrame() async {
     if (_controller == null || 
         !_controller!.value.isInitialized || 
@@ -663,9 +400,10 @@ class _CameraScreenState extends State<CameraScreen> {
         return;
       }
 
-      final input = _preprocessImage(image);
-      final output = await _runInference(input);
-      final objects = _processOutput(output, image.width, image.height);
+      // 🔄 ИСПОЛЬЗУЕМ YOLO ВМЕСТО SSD
+      final input = _preprocessImageForYOLO(image);
+      final output = await _runYOLOInference(input);
+      final objects = _processYOLOOutput(output, image.width, image.height);
       
       if (mounted) {
         setState(() {
@@ -675,7 +413,7 @@ class _CameraScreenState extends State<CameraScreen> {
       }
 
     } catch (e) {
-      debugPrint('Ошибка обработки кадра: $e');
+      debugPrint('Ошибка обработки кадра YOLO: $e');
     } finally {
       await _deleteImageFile(imageFile);
       
@@ -687,153 +425,221 @@ class _CameraScreenState extends State<CameraScreen> {
     }
   }
 
-  Future<void> _deleteImageFile(XFile? imageFile) async {
-    if (imageFile == null) return;
-    
+  // 🔄 ОСТАЛЬНЫЕ МЕТОДЫ ОСТАЮТСЯ ПРЕЖНИМИ (с небольшими адаптациями)
+
+   Future<void> _initializeApp() async {
+    await _loadModel();
+    await _initializeCamera();
+  }
+
+  Future<void> _initializeCamera() async {
+    setState(() {
+      _isLoading = true;
+      _cameraError = '';
+    });
+
     try {
-      final file = File(imageFile.path);
-      if (await file.exists()) {
-        await file.delete();
+      _cameras = await availableCameras();
+      if (_cameras == null || _cameras!.isEmpty) {
+        throw Exception('Камеры не найдены');
       }
+
+      final camera = _cameras!.firstWhere(
+        (camera) => camera.lensDirection == CameraLensDirection.back,
+        orElse: () => _cameras!.first,
+      );
+
+      _controller = CameraController(
+        camera,
+        ResolutionPreset.medium,
+        enableAudio: false,
+      );
+
+      await _controller!.initialize();
+
+      setState(() {
+        _isLoading = false;
+        _isCameraActive = true;
+      });
+
+      _startRealTimeDetection();
+
     } catch (e) {
-      debugPrint('Ошибка удаления временного файла: $e');
+      debugPrint('Ошибка инициализации камеры: $e');
+      setState(() {
+        _isLoading = false;
+        _cameraError = 'Ошибка доступа к камере: ${e.toString()}';
+      });
     }
   }
 
-  List<Uint8List> _preprocessImage(img.Image image) {
-    final resizedImage = img.copyResize(image, width: 300, height: 300);
-    
-    // Только контраст без sharpen
-    final enhancedImage = img.adjustColor(resizedImage, contrast: 1.2);
-    
-    final inputBytes = Uint8List(300 * 300 * 3);
-    int index = 0;
-    
-    for (int y = 0; y < 300; y++) {
-      for (int x = 0; x < 300; x++) {
-        final pixel = enhancedImage.getPixel(x, y);
-        inputBytes[index++] = (pixel.r).clamp(0, 255).toInt();
-        inputBytes[index++] = (pixel.g).clamp(0, 255).toInt();
-        inputBytes[index++] = (pixel.b).clamp(0, 255).toInt();
+  void _startRealTimeDetection() {
+    _detectionTimer = Timer.periodic(const Duration(milliseconds: 1000), (timer) {
+      if (_isCameraActive && !_isProcessing) {
+        _frameCounter++;
+        _processRealFrame();
       }
-    }
-    return [inputBytes];
+    });
   }
 
-  Future<List<List<dynamic>>> _runInference(List<Uint8List> input) async {
+  // 🔄 ОБНОВЛЯЕМ ИНФОРМАЦИЮ В ИНТЕРФЕЙСЕ
+  Widget _buildRealCameraView() {
+    return Stack(
+      children: [
+        CameraPreview(_controller!),
+        _buildObjectOverlay(),
+        Positioned(
+          top: 20,
+          left: 20,
+          right: 20,
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.black54,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.videocam, color: Colors.red, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'YOLO LIVE | Объектов: ${_detectedObjects.length} | Кадр: $_frameCounter | ИИ: ${_isModelLoaded ? "YOLO АКТИВЕН" : "ОФФЛАЙН"} | Голос: ${_isVoiceEnabled ? "ВКЛ" : "ВЫКЛ"}',
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // 🔄 ОСТАЛЬНЫЕ МЕТОДЫ ОЗВУЧИВАНИЯ И ИНТЕРФЕЙСА ОСТАЮТСЯ ПРЕЖНИМИ
+
+  // ... (остальные методы остаются без изменений)
+
+  Future<void> _announceObjects() async {
+    if (!_isVoiceEnabled || _flutterTts == null || !mounted) return;
+    
+    final now = DateTime.now();
+    if (now.difference(_lastVoiceTime).inSeconds < 3) return; // Увеличили интервал
+    
     try {
-      final inputTensors = _interpreter!.getInputTensors();
-      final outputTensors = _interpreter!.getOutputTensors();
+      final objectsToAnnounce = _detectedObjects
+          .where((obj) => obj.distance < 8.0)
+          .where((obj) => _isPriorityObject(obj.name))
+          .where((obj) => !_announcedObjects.contains(_getObjectKey(obj)))
+          .where((obj) => obj.confidence > 0.5)
+          .toList();
       
-      final outputShapes = outputTensors.map((tensor) => tensor.shape).toList();
-      final outputs = <List<dynamic>>[];
-      
-      for (var shape in outputShapes) {
-        final size = shape.reduce((a, b) => a * b);
-        outputs.add(List.filled(size, 0.0).reshape(shape));
-      }
-      
-      final outputMap = <int, Object>{};
-      for (int i = 0; i < outputs.length; i++) {
-        outputMap[i] = outputs[i];
-      }
-      
-      _interpreter!.runForMultipleInputs(input, outputMap);
-      
-      return outputs;
-    } catch (e) {
-      debugPrint('Ошибка inference: $e');
-      rethrow;
-    }
-  }
-
-  List<DetectedObject> _processOutput(List<List<dynamic>> output, int imageWidth, int imageHeight) {
-    final objects = <DetectedObject>[];
-    
-    try {
-      // Для SSD MobileNet выходы обычно:
-      // output[0] - локации [1, N, 4]
-      // output[1] - классы [1, N]
-      // output[2] - уверенности [1, N]
-      // output[3] - количество обнаружений [1]
-      
-      final numDetections = min(output[3][0].toInt() as int, 10); // Ограничиваем количество
-      
-      for (int i = 0; i < numDetections; i++) {
-        try {
-          final score = output[2][0][i].toDouble();
-          
-          if (score > _confidenceThreshold && score.isFinite) {
-            final classIndex = output[1][0][i].toInt();
-            final englishLabel = _getEnglishLabel(classIndex);
-            final russianLabel = _russianLabels[englishLabel] ?? englishLabel;
-            
-            if (russianLabel != '???' && russianLabel != 'Unknown') {
-              // Получаем координаты bounding box
-              final ymin = output[0][0][i][0].toDouble();
-              final xmin = output[0][0][i][1].toDouble();
-              final ymax = output[0][0][i][2].toDouble();
-              final xmax = output[0][0][i][3].toDouble();
-              
-              // Конвертируем в пиксели
-              final left = (xmin * imageWidth).clamp(0, imageWidth.toDouble());
-              final top = (ymin * imageHeight).clamp(0, imageHeight.toDouble());
-              final right = (xmax * imageWidth).clamp(0, imageWidth.toDouble());
-              final bottom = (ymax * imageHeight).clamp(0, imageHeight.toDouble());
-              
-              final width = right - left;
-              final height = bottom - top;
-              
-              // Фильтруем слишком маленькие объекты
-              if (width > 20 && height > 20 && width < imageWidth * 0.8 && height < imageHeight * 0.8) {
-                final objectType = _getObjectType(englishLabel);
-                final distance = _estimateDistance(objectType, width);
-                final direction = _estimateDirection(left, right, imageWidth);
-                
-                objects.add(DetectedObject(
-                  name: russianLabel,
-                  distance: distance,
-                  direction: direction,
-                  type: objectType,
-                  boundingBox: Rect.fromLTRB(left, top, right, bottom),
-                  confidence: score,
-                  imageWidth: imageWidth.toDouble(),
-                  imageHeight: imageHeight.toDouble(),
-                ));
-                
-                debugPrint('Обнаружен: $russianLabel (${score.toStringAsFixed(2)})');
-              }
-            }
+      if (objectsToAnnounce.isNotEmpty) {
+        objectsToAnnounce.sort((a, b) {
+          final priorityA = _getObjectPriority(a.name);
+          final priorityB = _getObjectPriority(b.name);
+          if (priorityA != priorityB) {
+            return priorityB.compareTo(priorityA);
           }
-        } catch (e) {
-          debugPrint('Ошибка обработки объекта $i: $e');
+          return a.distance.compareTo(b.distance);
+        });
+        
+        final nearestObject = objectsToAnnounce.first;
+        
+        if (_shouldAnnounceObject(nearestObject)) {
+          final announcement = _generateAnnouncement(nearestObject);
+          
+          debugPrint('YOLO озвучивание: $announcement');
+          
+          await _flutterTts!.speak(announcement);
+          _announcedObjects.add(_getObjectKey(nearestObject));
+          _lastVoiceTime = DateTime.now();
+          
+          if (_announcedObjects.length > 20) {
+            final temp = _announcedObjects.toList().sublist(10);
+            _announcedObjects.clear();
+            _announcedObjects.addAll(temp);
+          }
         }
       }
     } catch (e) {
-      debugPrint('Ошибка обработки вывода модели: $e');
+      debugPrint('Ошибка озвучивания: $e');
     }
-    
-    return _applyNMS(objects, 0.3);
   }
 
-  // Получаем английское название по индексу класса
-  String _getEnglishLabel(int classIndex) {
-    // COCO dataset labels (91 classes)
-    final List<String> cocoLabels = [
-      'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
-      'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat',
-      'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack',
-      'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball',
-      'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
-      'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
-      'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake',
-      'chair', 'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop',
-      'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink',
-      'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush'
-    ];
-    
-    return classIndex < cocoLabels.length ? cocoLabels[classIndex] : 'Unknown';
+  bool _isPriorityObject(String objectName) {
+    final englishName = _russianLabels.entries
+        .firstWhere((entry) => entry.value == objectName, orElse: () => MapEntry('', ''))
+        .key;
+    return _priorityObjects.contains(englishName) || objectName.contains('человек') || objectName.contains('авто');
   }
+
+  int _getObjectPriority(String objectName) {
+    final englishName = _russianLabels.entries
+        .firstWhere((entry) => entry.value == objectName, orElse: () => MapEntry('', ''))
+        .key;
+    
+    if (englishName == 'person') return 100;
+    if (['car', 'truck', 'bus', 'motorcycle'].contains(englishName)) return 90;
+    if (['chair', 'table', 'door'].contains(englishName)) return 80;
+    if (['stairs', 'wall'].contains(englishName)) return 70;
+    return 50;
+  }
+
+  String _generateAnnouncement(DetectedObject obj) {
+    String distanceText;
+    
+    if (obj.distance < 1.5) {
+      distanceText = 'очень близко';
+    } else if (obj.distance < 3.0) {
+      distanceText = 'близко';
+    } else if (obj.distance < 6.0) {
+      distanceText = 'впереди';
+    } else {
+      distanceText = 'далеко';
+    }
+    
+    if (obj.distance < 2.0) {
+      return 'Внимание! ${obj.name} $distanceText ${obj.direction}';
+    }
+    
+    return '${obj.name} $distanceText';
+  }
+
+  String _getObjectKey(DetectedObject obj) {
+    return '${obj.name}_${obj.direction}_${(obj.distance ~/ 0.5)}';
+  }
+
+  bool _shouldAnnounceObject(DetectedObject obj) {
+    if (obj.confidence < 0.5) return false;
+    if (obj.distance < 3.0) return true;
+    if (obj.distance >= 3.0) {
+      return _getObjectPriority(obj.name) >= 70;
+    }
+    return true;
+  }
+
+  void _toggleVoice() {
+    setState(() {
+      _isVoiceEnabled = !_isVoiceEnabled;
+    });
+    
+    if (_isVoiceEnabled) {
+      _announcedObjects.clear();
+    } else {
+      _flutterTts?.stop();
+    }
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(_isVoiceEnabled ? 
+          'Озвучивание включено' : 'Озвучивание выключено'),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
+  // 🔄 ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ДЛЯ YOLO
 
   List<DetectedObject> _applyNMS(List<DetectedObject> objects, double iouThreshold) {
     objects.sort((a, b) => b.confidence.compareTo(a.confidence));
@@ -902,7 +708,7 @@ class _CameraScreenState extends State<CameraScreen> {
     }
     
     final realWidth = _getObjectWidth(type);
-    const focalLength = 800.0; // Подбираем фокусное расстояние
+    const focalLength = 800.0;
     final distance = (realWidth * focalLength) / pixelWidth;
     
     return (distance.clamp(0.5, 30.0) * 10).round() / 10.0;
@@ -932,7 +738,7 @@ class _CameraScreenState extends State<CameraScreen> {
       _processRealFrame();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Ручное сканирование: ${_detectedObjects.length} объектов'),
+          content: Text('YOLO ручное сканирование: ${_detectedObjects.length} объектов'),
           duration: const Duration(seconds: 1),
         ),
       );
@@ -957,7 +763,7 @@ class _CameraScreenState extends State<CameraScreen> {
             children: [
               Icon(Icons.warning, color: Colors.orange),
               SizedBox(width: 10),
-              Text('Обнаружены близкие объекты'),
+              Text('YOLO: Обнаружены близкие объекты'),
             ],
           ),
           content: Column(
@@ -1012,9 +818,197 @@ class _CameraScreenState extends State<CameraScreen> {
     _stopCamera();
     super.dispose();
   }
+
+  // 🔄 ОСТАЛЬНАЯ ЧАСТЬ ИНТЕРФЕЙСА ОСТАЕТСЯ ПРЕЖНЕЙ
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Навигационный помощник - YOLO Камера'),
+        backgroundColor: Colors.blue,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            _stopCamera();
+            Navigator.pop(context);
+          },
+        ),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: _buildCameraArea(),
+          ),
+          _buildControlPanel(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCameraArea() {
+    if (_isLoading) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Инициализация YOLO камеры...'),
+          ],
+        ),
+      );
+    }
+
+    if (_cameraError.isNotEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error, size: 64, color: Colors.red),
+            const SizedBox(height: 16),
+            Text(
+              _cameraError,
+              style: const TextStyle(fontSize: 16, color: Colors.red),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _initializeApp,
+              child: const Text('Попробовать снова'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (!_isCameraActive || _controller == null || !_controller!.value.isInitialized) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.camera_alt, size: 100, color: Colors.blue),
+            const SizedBox(height: 20),
+            Text(
+              _isModelLoaded ? 'YOLO модель загружена' : 'Загрузка YOLO модели...',
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Нажмите "Активировать камеру" для начала\nнавигационной помощи с YOLO ИИ-анализом',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, color: Colors.grey),
+            ),
+            const SizedBox(height: 30),
+            ElevatedButton.icon(
+              onPressed: _initializeCamera,
+              icon: const Icon(Icons.camera_alt),
+              label: const Text('Активировать YOLO камеру'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return _buildRealCameraView();
+  }
+
+  Widget _buildObjectOverlay() {
+    return IgnorePointer(
+      child: CustomPaint(
+        painter: ObjectDetectionPainter(_detectedObjects),
+        size: Size.infinite,
+      ),
+    );
+  }
+
+  Widget _buildControlPanel() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      color: Colors.grey[100],
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Статус:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              Row(
+                children: [
+                  _buildStatusChip('КАМЕРА', _isCameraActive ? Colors.green : Colors.orange),
+                  const SizedBox(width: 5),
+                  _buildStatusChip('YOLO', _isModelLoaded ? Colors.green : Colors.red),
+                  const SizedBox(width: 5),
+                  _buildStatusChip('ГОЛОС', _isVoiceEnabled ? Colors.green : Colors.grey),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              IconButton(
+                onPressed: _toggleVoice,
+                icon: Icon(_isVoiceEnabled ? Icons.volume_up : Icons.volume_off),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _isVoiceEnabled ? Colors.blue : Colors.grey,
+                ),
+              ),
+              IconButton(
+                onPressed: _isCameraActive ? _manualDetection : null,
+                icon: const Icon(Icons.visibility),
+              ),
+              IconButton(
+                onPressed: _isCameraActive ? _checkDangers : null,
+                icon: const Icon(Icons.warning),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusChip(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+          fontSize: 10,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteImageFile(XFile? imageFile) async {
+    if (imageFile == null) return;
+    
+    try {
+      final file = File(imageFile.path);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (e) {
+      debugPrint('Ошибка удаления временного файла: $e');
+    }
+  }
 }
 
-// Остальные классы остаются без изменений
+// Классы для объектов остаются прежними
 enum ObjectType { person, door, chair, table, car }
 
 class DetectedObject {
@@ -1038,27 +1032,15 @@ class DetectedObject {
     required this.imageHeight,
   });
 }
-
 class ObjectDetectionPainter extends CustomPainter {
   final List<DetectedObject> objects;
-
   ObjectDetectionPainter(this.objects);
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3;
-
-    final textStyle = const TextStyle(
-      color: Colors.white,
-      fontSize: 14,
-      fontWeight: FontWeight.bold,
-    );
-
-    final textPainter = TextPainter(
-      textDirection: TextDirection.ltr,
-    );
+   void paint(Canvas canvas, Size size) {
+    final paint = Paint()..style = PaintingStyle.stroke..strokeWidth = 3;
+    final textStyle = TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold);
+    final textPainter = TextPainter(textDirection: TextDirection.ltr);
 
     for (final obj in objects) {
       if (obj.distance < 2.0) {
@@ -1071,7 +1053,6 @@ class ObjectDetectionPainter extends CustomPainter {
 
       final scaleX = size.width / obj.imageWidth;
       final scaleY = size.height / obj.imageHeight;
-
       final rect = Rect.fromLTWH(
         obj.boundingBox.left * scaleX,
         obj.boundingBox.top * scaleY,
@@ -1082,11 +1063,7 @@ class ObjectDetectionPainter extends CustomPainter {
       canvas.drawRect(rect, paint);
 
       final text = '${obj.name} ${obj.distance.toStringAsFixed(1)}м';
-      textPainter.text = TextSpan(
-        text: text,
-        style: textStyle,
-      );
-      
+      textPainter.text = TextSpan(text: text, style: textStyle);
       textPainter.layout();
       
       final textBackground = Rect.fromLTWH(
@@ -1096,16 +1073,10 @@ class ObjectDetectionPainter extends CustomPainter {
         textPainter.height + 4,
       );
       
-      final backgroundPaint = Paint()
-        ..color = const Color(0xB3000000)
-        ..style = PaintingStyle.fill;
-      
+      final backgroundPaint = Paint()..color = Color(0xB3000000)..style = PaintingStyle.fill;
       canvas.drawRect(textBackground, backgroundPaint);
       
-      textPainter.paint(
-        canvas,
-        Offset(rect.left + 4, rect.top - textPainter.height - 2),
-      );
+      textPainter.paint(canvas, Offset(rect.left + 4, rect.top - textPainter.height - 2));
     }
   }
 

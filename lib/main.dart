@@ -1,5 +1,7 @@
+// main.dart (обновленный)
 import 'package:flutter/material.dart';
 import 'camera_screen.dart';
+import 'gps_tracker.dart'; // Добавляем импорт
 
 void main() {
   runApp(const NavigationAssistantApp());
@@ -54,7 +56,7 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 20),
               const Text(
-                'Реальная камера с компьютерным зрением\nдля помощи в навигации',
+                'Реальная камера с компьютерным зрением\nи GPS-навигация для помощи в перемещении',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 16,
@@ -62,6 +64,8 @@ class HomeScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 40),
+              
+              // Кнопка камеры
               ElevatedButton.icon(
                 onPressed: () {
                   Navigator.push(
@@ -71,23 +75,62 @@ class HomeScreen extends StatelessWidget {
                 },
                 icon: const Icon(Icons.camera_alt),
                 label: const Text(
-                  'Запустить реальную камеру',
+                  'Запустить камеру с ИИ',
                   style: TextStyle(fontSize: 18),
                 ),
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
                   backgroundColor: Colors.blue,
                   foregroundColor: Colors.white,
+                  minimumSize: const Size(250, 50),
                 ),
               ),
               const SizedBox(height: 20),
-              const Text(
-                '⚠️ Разрешите доступ к камере в браузере',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  color: Colors.orange,
+              
+              // Кнопка GPS-трекера
+              ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const GPSTrackerScreen()),
+                  );
+                },
+                icon: const Icon(Icons.gps_fixed),
+                label: const Text(
+                  'Запустить GPS-трекер',
+                  style: TextStyle(fontSize: 18),
                 ),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(250, 50),
+                ),
+              ),
+              
+              const SizedBox(height: 30),
+              
+              // Информационные сообщения
+              const Column(
+                children: [
+                  Text(
+                    '⚠️ Для работы требуется:',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.orange,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    '• Разрешение на доступ к камере\n• Разрешение на доступ к местоположению\n• Включенные службы геолокации',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.orange,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
