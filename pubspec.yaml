@@ -1,4 +1,4 @@
-name: navigation_assistant
+name: safeway_app
 description: "Навигационный помощник для слабовидящих"
 
 publish_to: 'none'
@@ -13,12 +13,11 @@ dependencies:
     sdk: flutter
 
   wakelock_plus: ^1.4.0
-  camera: ^0.10.5
-  tflite_flutter: ^0.12.1
-  image: ^4.0.17
-  flutter_tts: ^3.8.3
+  flutter_tts: ^4.2.3
   just_audio: ^0.10.5
+  vibration: ^3.1.4
   
+  ultralytics_yolo: ^0.1.40
 
 dev_dependencies:
   flutter_test:
@@ -28,6 +27,4 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/ssd_mobilenet.tflite
-    - assets/info.mp3
-    - assets/warn.mp3
+    - assets/
